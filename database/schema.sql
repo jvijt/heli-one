@@ -26,12 +26,15 @@ CREATE TABLE IF NOT EXISTS members (
     member_since DATE NULL,
     photo_path VARCHAR(255) NULL,
     notes TEXT NULL,
+    deleted_at DATETIME NULL,
+    deleted_by_admin_id INT UNSIGNED NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_members_name (last_name, first_name),
     INDEX idx_members_email (email),
     INDEX idx_members_number (member_number),
-    INDEX idx_members_type_status (member_type, status)
+    INDEX idx_members_type_status (member_type, status),
+    INDEX idx_members_deleted_at (deleted_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS memberships (
