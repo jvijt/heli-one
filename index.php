@@ -77,6 +77,7 @@ body{font-family:Arial,sans-serif;background:#f5f6f8;margin:0;color:#171717}head
 <div class="actions">
 <a class="btn" href="/members.php">Ledenbeheer</a>
 <a class="btn" href="/import.php">Excel import</a>
+<a class="btn" href="/duplicates.php">Duplicaten controleren</a>
 <span class="btn disabled">Tags & batchacties — volgende stap</span>
 </div>
 
