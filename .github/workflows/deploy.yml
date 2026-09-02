@@ -1,0 +1,42 @@
+name: Deploy Heli One Members
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Upload website via FTP
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Repository ophalen
+        uses: actions/checkout@v6
+
+      - name: Runtime configuratie genereren
+        env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          SETUP_TOKEN: ${{ secrets.SETUP_TOKEN }}
+        run: |
+          mkdir -p config
+          php -r '$c=["host"=>getenv("DB_HOST"),"name"=>getenv("DB_NAME"),"user"=>getenv("DB_USER"),"password"=>getenv("DB_PASSWORD")]; file_put_contents("config/database.php", "<?php\nreturn ".var_export($c,true).";\n");'
+          php -r '$c=["setup_token"=>getenv("SETUP_TOKEN")]; file_put_contents("config/runtime.php", "<?php\nreturn ".var_export($c,true).";\n");'
+
+      - name: Upload to server
+        uses: SamKirkland/FTP-Deploy-Action@v4.4.0
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ftp
+          port: 21
+          server-dir: /
+          timeout: 60000
+          log-level: verbose
+          exclude: |
+            **/.git*
+            **/.git*/**
