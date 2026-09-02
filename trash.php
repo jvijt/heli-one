@@ -1,0 +1,42 @@
+<?php
+declare(strict_types=1);
+require __DIR__ . '/app/bootstrap.php';
+Auth::requireLogin();
+$pdo = Database::connection();
+ensure_member_soft_delete_schema($pdo);
+$message='';$error='';
+
+$expired = $pdo->query('SELECT id,member_number,first_name,last_name FROM members WHERE deleted_at IS NOT NULL AND deleted_at < DATE_SUB(NOW(), INTERVAL 60 DAY)')->fetchAll();
+foreach($expired as $m){
+    $pdo->prepare('INSERT INTO audit_log (admin_id,action,entity_type,entity_id,details) VALUES (:admin,"member_trash_expired","member",:id,:details)')->execute(['admin'=>(int)($_SESSION['admin_id']??0)?:null,'id'=>$m['id'],'details'=>json_encode(['member_number'=>$m['member_number'],'name'=>trim($m['first_name'].' '.$m['last_name'])],JSON_UNESCAPED_UNICODE)]);
+    $pdo->prepare('DELETE FROM members WHERE id=:id')->execute(['id'=>$m['id']]);
+}
+
+if($_SERVER['REQUEST_METHOD']==='POST'){
+    verify_csrf();
+    $id=(int)($_POST['id']??0);
+    $action=(string)($_POST['action']??'');
+    try{
+        $stmt=$pdo->prepare('SELECT * FROM members WHERE id=:id AND deleted_at IS NOT NULL');$stmt->execute(['id'=>$id]);$m=$stmt->fetch();
+        if(!$m)throw new RuntimeException('Lid niet gevonden in de prullenbak.');
+        if($action==='restore'){
+            if(strtotime((string)$m['deleted_at']) < strtotime('-60 days'))throw new RuntimeException('De hersteltermijn van 60 dagen is verstreken.');
+            $pdo->prepare('UPDATE members SET deleted_at=NULL,deleted_by_admin_id=NULL WHERE id=:id')->execute(['id'=>$id]);
+            $pdo->prepare('INSERT INTO audit_log (admin_id,action,entity_type,entity_id,details) VALUES (:admin,"member_restore","member",:id,:details)')->execute(['admin'=>(int)($_SESSION['admin_id']??0)?:null,'id'=>$id,'details'=>json_encode(['member_number'=>$m['member_number']],JSON_UNESCAPED_UNICODE)]);
+            $message='Lid teruggeplaatst.';
+        }elseif($action==='delete_forever'){
+            $pdo->prepare('INSERT INTO audit_log (admin_id,action,entity_type,entity_id,details) VALUES (:admin,"member_delete_forever","member",:id,:details)')->execute(['admin'=>(int)($_SESSION['admin_id']??0)?:null,'id'=>$id,'details'=>json_encode(['member_number'=>$m['member_number'],'name'=>trim($m['first_name'].' '.$m['last_name'])],JSON_UNESCAPED_UNICODE)]);
+            $pdo->prepare('DELETE FROM members WHERE id=:id')->execute(['id'=>$id]);
+            $message='Lid definitief verwijderd.';
+        }else throw new RuntimeException('Ongeldige actie.');
+    }catch(Throwable $e){$error=$e->getMessage();}
+}
+
+$members=$pdo->query('SELECT m.*,DATEDIFF(DATE_ADD(m.deleted_at,INTERVAL 60 DAY),NOW()) AS days_left FROM members m WHERE m.deleted_at IS NOT NULL ORDER BY m.deleted_at DESC')->fetchAll();
+?>
+<!doctype html><html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Prullenbak - Heli One Members</title><style>
+body{font-family:Arial,sans-serif;background:#f5f6f8;margin:0;color:#171717}header{background:#111;color:#fff;padding:18px 28px;display:flex;justify-content:space-between;align-items:center}header a{color:#fff}main{max-width:1180px;margin:32px auto;padding:0 22px}.top{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}.btn{display:inline-block;padding:10px 14px;border-radius:9px;border:0;text-decoration:none;cursor:pointer;font-weight:700;background:#111;color:#fff}.restore{background:#1f6b3d}.danger{background:#971f1f}.secondary{background:#e7eaee;color:#111}.tablewrap{overflow:auto;background:#fff;border-radius:14px;box-shadow:0 4px 18px #0000000d;margin-top:20px}table{width:100%;border-collapse:collapse;min-width:900px}th,td{padding:13px 14px;border-bottom:1px solid #eceff2;text-align:left;vertical-align:middle}th{font-size:13px;color:#68707a;background:#fafbfc}.muted{color:#68707a}.ok,.err,.notice{padding:13px 15px;border-radius:9px;margin:16px 0}.ok{background:#e9f8ee}.err{background:#feecec}.notice{background:#eef4ff}.actions{display:flex;gap:7px;flex-wrap:wrap}.photo{width:42px;height:42px;border-radius:50%;object-fit:cover;background:#e8ebef}.name{font-weight:700}.days{font-weight:700}</style></head><body>
+<header><strong>Heli One Members</strong><div><a href="/">Dashboard</a> · <a href="/members.php">Leden</a> · <a href="/logout.php">Afmelden</a></div></header><main><div class="top"><div><h1>Prullenbak</h1><div class="muted"><?=count($members)?> lid/leden in prullenbak</div></div><a class="btn secondary" href="/members.php">← Ledenbeheer</a></div>
+<div class="notice">Leden blijven maximaal <strong>60 dagen</strong> in de prullenbak. Binnen die termijn kan je ze volledig terugplaatsen. Na 60 dagen worden ze automatisch definitief verwijderd.</div><?php if($message):?><div class="ok"><?=e($message)?></div><?php endif;?><?php if($error):?><div class="err"><?=e($error)?></div><?php endif;?>
+<div class="tablewrap"><table><thead><tr><th></th><th>Lid</th><th>E-mail</th><th>GSM</th><th>Verwijderd op</th><th>Nog herstelbaar</th><th>Acties</th></tr></thead><tbody><?php if(!$members):?><tr><td colspan="7" class="muted">De prullenbak is leeg.</td></tr><?php endif;?><?php foreach($members as$m):?><tr><td><?php if(!empty($m['photo_path'])):?><img class="photo" src="<?=e($m['photo_path'])?>" alt=""><?php else:?><span class="photo"></span><?php endif;?></td><td><div class="name"><?=e($m['last_name'].' '.$m['first_name'])?></div><div class="muted"><?=e($m['member_number']?:'Geen lidnummer')?></div></td><td><?=e($m['email']??'')?></td><td><?=e($m['mobile']??'')?></td><td><?=e((string)$m['deleted_at'])?></td><td class="days"><?=max(0,(int)$m['days_left'])?> dag(en)</td><td><form method="post" class="actions"><input type="hidden" name="csrf_token" value="<?=e(csrf_token())?>"><input type="hidden" name="id" value="<?=(int)$m['id']?>"><button class="btn restore" type="submit" name="action" value="restore">Terugplaatsen</button><button class="btn danger" type="submit" name="action" value="delete_forever" onclick="return confirm('Dit lid definitief verwijderen? Dit kan niet ongedaan worden gemaakt.')">Definitief verwijderen</button></form></td></tr><?php endforeach;?></tbody></table></div>
+</main></body></html>
