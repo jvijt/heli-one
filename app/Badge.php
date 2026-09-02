@@ -25,6 +25,7 @@ function badge_field_catalog(): array
         'first_name' => 'Voornaam',
         'last_name' => 'Familienaam',
         'member_number' => 'Lidnummer',
+        'photo' => 'Pasfoto',
         'member_type' => 'Type lid',
         'status' => 'Status',
         'member_since' => 'Lid sinds',
