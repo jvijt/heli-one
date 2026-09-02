@@ -1,0 +1,15 @@
+# Runtime secrets generated during deployment
+config/database.php
+config/runtime.php
+
+# Local/editor files
+.env
+.env.*
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Import temp files
+storage/imports/*
+!storage/imports/.gitkeep
