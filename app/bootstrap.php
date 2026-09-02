@@ -55,3 +55,10 @@ function ensure_member_soft_delete_schema(PDO $pdo): void
     }
     $done = true;
 }
+
+// De ledenfiche krijgt een client-side cropper voor pasfoto's (vaste verhouding 3:4).
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET' && basename((string)($_SERVER['SCRIPT_NAME'] ?? '')) === 'member.php') {
+    register_shutdown_function(static function (): void {
+        echo '<script src="/assets/member-photo-cropper.js?v=1"></script>';
+    });
+}
