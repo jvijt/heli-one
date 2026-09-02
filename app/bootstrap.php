@@ -38,3 +38,20 @@ function verify_csrf(): void
         exit('Ongeldige of verlopen aanvraag. Vernieuw de pagina en probeer opnieuw.');
     }
 }
+
+function ensure_member_soft_delete_schema(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) return;
+    $dbName = (string)$pdo->query('SELECT DATABASE()')->fetchColumn();
+    $stmt = $pdo->prepare('SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=:db AND TABLE_NAME="members" AND COLUMN_NAME IN ("deleted_at","deleted_by_admin_id")');
+    $stmt->execute(['db'=>$dbName]);
+    $cols = array_column($stmt->fetchAll(), 'COLUMN_NAME');
+    if (!in_array('deleted_at', $cols, true)) {
+        $pdo->exec('ALTER TABLE members ADD COLUMN deleted_at DATETIME NULL AFTER notes, ADD INDEX idx_members_deleted_at (deleted_at)');
+    }
+    if (!in_array('deleted_by_admin_id', $cols, true)) {
+        $pdo->exec('ALTER TABLE members ADD COLUMN deleted_by_admin_id INT UNSIGNED NULL AFTER deleted_at');
+    }
+    $done = true;
+}
