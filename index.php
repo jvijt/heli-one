@@ -76,7 +76,7 @@ body{font-family:Arial,sans-serif;background:#f5f6f8;margin:0;color:#171717}head
 </section>
 <div class="actions">
 <a class="btn" href="/members.php">Ledenbeheer</a>
-<span class="btn disabled">Excel import — volgende stap</span>
+<a class="btn" href="/import.php">Excel import</a>
 <span class="btn disabled">Tags & batchacties — volgende stap</span>
 </div>
 
