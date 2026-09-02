@@ -67,6 +67,16 @@ CREATE TABLE IF NOT EXISTS member_tags (
     CONSTRAINT fk_member_tags_tag FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS duplicate_exceptions (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    member_id_a INT UNSIGNED NOT NULL,
+    member_id_b INT UNSIGNED NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_duplicate_pair (member_id_a, member_id_b),
+    CONSTRAINT fk_dup_exc_a FOREIGN KEY (member_id_a) REFERENCES members(id) ON DELETE CASCADE,
+    CONSTRAINT fk_dup_exc_b FOREIGN KEY (member_id_b) REFERENCES members(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS import_jobs (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     admin_id INT UNSIGNED NULL,
