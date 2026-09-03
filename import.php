@@ -5,6 +5,7 @@ require_once __DIR__ . '/app/ImportReader.php';
 Auth::requireLogin();
 
 $pdo = Database::connection();
+ensure_member_soft_delete_schema($pdo);
 $year = (int)date('Y');
 $error = '';
 $result = null;
@@ -23,12 +24,11 @@ $fieldLabels = [
     'mobile' => 'GSM',
     'weight_kg' => 'Gewicht (kg)',
     'member_since' => 'Lid sinds',
-    'member_type' => 'Type lid',
+    'member_type' => 'Type lid (VIEWER / FLYER / PILOT)',
     'status' => 'Status',
     'notes' => 'Vrije notities',
     'payment_status' => 'Betaalstatus ' . $year,
     'paid_at' => 'Betaald op',
-    'free_flight_entitled' => 'Recht op gratis vlucht',
     'free_flight_date' => 'Datum gratis vlucht',
     'tags' => 'Tags uit Excel',
 ];
@@ -49,16 +49,12 @@ function import_date(mixed $value): ?string
     return $ts ? date('Y-m-d', $ts) : null;
 }
 
-function bool_value(mixed $value): int
-{
-    return in_array(strtolower(trim((string)$value)), ['1','ja','yes','true','y','x','recht','j'], true) ? 1 : 0;
-}
-
 function clean_type(mixed $value): ?string
 {
     $v = strtolower(trim((string)$value));
-    if (in_array($v, ['flying','vliegend','vlieger'], true)) return 'flying';
-    if (in_array($v, ['supporting','steunend','steunend lid'], true)) return 'supporting';
+    if (in_array($v, ['viewer','supporting','steunend','steunend lid','liefhebber','spotter'], true)) return 'viewer';
+    if (in_array($v, ['flyer','flying','vliegend','vlieger','vliegend lid'], true)) return 'flyer';
+    if (in_array($v, ['pilot','piloot','piloten','eigenaar','piloot/eigenaar'], true)) return 'pilot';
     return null;
 }
 
@@ -120,21 +116,28 @@ function ensure_tag(PDO $pdo, string $name): int
 function find_existing_member(PDO $pdo, string $first, string $last, string $email, ?string $birthDate, string $mobile): array|false
 {
     if ($email !== '') {
-        $stmt = $pdo->prepare('SELECT id,member_type,status FROM members WHERE LOWER(email)=:email AND LOWER(first_name)=:first AND LOWER(last_name)=:last LIMIT 1');
+        $stmt = $pdo->prepare('SELECT id,member_type,status FROM members WHERE deleted_at IS NULL AND LOWER(email)=:email AND LOWER(first_name)=:first AND LOWER(last_name)=:last LIMIT 1');
         $stmt->execute(['email'=>strtolower($email),'first'=>strtolower($first),'last'=>strtolower($last)]);
         return $stmt->fetch();
     }
     if ($birthDate) {
-        $stmt = $pdo->prepare('SELECT id,member_type,status FROM members WHERE LOWER(first_name)=:first AND LOWER(last_name)=:last AND birth_date=:birth LIMIT 1');
+        $stmt = $pdo->prepare('SELECT id,member_type,status FROM members WHERE deleted_at IS NULL AND LOWER(first_name)=:first AND LOWER(last_name)=:last AND birth_date=:birth LIMIT 1');
         $stmt->execute(['first'=>strtolower($first),'last'=>strtolower($last),'birth'=>$birthDate]);
         return $stmt->fetch();
     }
     if ($mobile !== '') {
-        $stmt = $pdo->prepare('SELECT id,member_type,status FROM members WHERE LOWER(first_name)=:first AND LOWER(last_name)=:last AND mobile=:mobile LIMIT 1');
+        $stmt = $pdo->prepare('SELECT id,member_type,status FROM members WHERE deleted_at IS NULL AND LOWER(first_name)=:first AND LOWER(last_name)=:last AND mobile=:mobile LIMIT 1');
         $stmt->execute(['first'=>strtolower($first),'last'=>strtolower($last),'mobile'=>$mobile]);
         return $stmt->fetch();
     }
     return false;
+}
+
+function current_membership(PDO $pdo, int $id, int $year): array|false
+{
+    $stmt=$pdo->prepare('SELECT * FROM memberships WHERE member_id=:id AND membership_year=:year LIMIT 1');
+    $stmt->execute(['id'=>$id,'year'=>$year]);
+    return $stmt->fetch();
 }
 
 if (isset($_GET['reset'])) {
@@ -187,10 +190,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'execu
         $defaults = [
             'email' => $defaultEmail !== '' ? $defaultEmail : null,
             'member_since' => import_date($_POST['default_member_since'] ?? ''),
-            'member_type' => in_array($_POST['default_member_type'] ?? '', ['supporting','flying'], true) ? (string)$_POST['default_member_type'] : null,
+            'member_type' => in_array($_POST['default_member_type'] ?? '', ['viewer','flyer','pilot'], true) ? (string)$_POST['default_member_type'] : null,
             'status' => in_array($_POST['default_status'] ?? '', ['active','inactive'], true) ? (string)$_POST['default_status'] : null,
             'payment_status' => in_array($_POST['default_payment_status'] ?? '', ['paid','unpaid'], true) ? (string)$_POST['default_payment_status'] : null,
-            'free_flight_entitled' => ($_POST['default_free_flight_entitled'] ?? '') === '' ? null : (int)$_POST['default_free_flight_entitled'],
         ];
         $batchTags = array_values(array_unique(array_filter(array_map('trim', preg_split('/\r?\n/', (string)($_POST['batch_tags'] ?? '')) ?: []))));
         $rows = ImportReader::read($state['path'], $state['original']);
@@ -227,7 +229,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'execu
             if (isset($data['member_type']) && $defaults['member_type'] === null) $data['member_type'] = clean_type($data['member_type']);
             if (isset($data['status']) && $defaults['status'] === null) $data['status'] = clean_status($data['status']);
             if (isset($data['payment_status']) && $defaults['payment_status'] === null) $data['payment_status'] = clean_payment($data['payment_status']);
-            if (isset($data['free_flight_entitled']) && $defaults['free_flight_entitled'] === null) $data['free_flight_entitled'] = bool_value($data['free_flight_entitled']);
 
             $birthDate = !empty($data['birth_date']) ? (string)$data['birth_date'] : null;
             $mobile = trim((string)($data['mobile'] ?? ''));
@@ -242,6 +243,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'execu
             $values['last_name']=$last;
             if ($email !== '') $values['email']=$email;
 
+            $isNew = !$existing;
             if ($existing) {
                 $id = (int)$existing['id'];
                 $sets=[]; $params=['id'=>$id];
@@ -249,20 +251,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'execu
                 if ($sets) $pdo->prepare('UPDATE members SET '.implode(',',$sets).' WHERE id=:id')->execute($params);
                 $updated++;
             } else {
-                $values['member_type'] = $values['member_type'] ?? 'supporting';
+                $values['member_type'] = $values['member_type'] ?? 'viewer';
                 $values['status'] = $values['status'] ?? 'active';
                 $cols=array_keys($values); $ph=array_map(static fn($c)=>':'.$c,$cols);
                 $pdo->prepare('INSERT INTO members ('.implode(',',$cols).') VALUES ('.implode(',',$ph).')')->execute($values);
                 $id=(int)$pdo->lastInsertId(); member_number($pdo,$id); $created++;
             }
 
-            $currentType = $data['member_type'] ?? ($existing['member_type'] ?? 'supporting');
-            $hasMembershipData = isset($data['payment_status']) || isset($data['paid_at']) || isset($data['free_flight_entitled']) || isset($data['free_flight_date']) || $defaults['member_type'] !== null || isset($data['member_since']);
-            if ($hasMembershipData) {
-                $payment = $data['payment_status'] ?? 'unpaid';
-                $paidAt = $payment === 'paid' ? ($data['paid_at'] ?? date('Y-m-d')) : null;
-                $entitled = array_key_exists('free_flight_entitled',$data) ? (int)$data['free_flight_entitled'] : 1;
-                $flightDate = $data['free_flight_date'] ?? null;
+            $currentType = $data['member_type'] ?? ($existing['member_type'] ?? 'viewer');
+            if (!in_array($currentType,['viewer','flyer','pilot'],true)) $currentType='viewer';
+            $existingMembership = current_membership($pdo,$id,$year);
+            $hasExplicitAnnual = array_key_exists('payment_status',$data) || array_key_exists('paid_at',$data) || array_key_exists('free_flight_date',$data);
+            $typeWasExplicit = array_key_exists('member_type',$data) && $data['member_type'] !== null;
+
+            if ($isNew || $existingMembership || $hasExplicitAnnual || $typeWasExplicit) {
+                $payment = array_key_exists('payment_status',$data) && $data['payment_status'] ? (string)$data['payment_status'] : (string)($existingMembership['payment_status'] ?? 'unpaid');
+                $paidAt = $existingMembership['paid_at'] ?? null;
+                if (array_key_exists('payment_status',$data)) $paidAt = $payment==='paid' ? ($data['paid_at'] ?? $paidAt ?? date('Y-m-d')) : null;
+                elseif (array_key_exists('paid_at',$data)) $paidAt = $data['paid_at'] ?: null;
+
+                $entitled = $currentType === 'flyer' ? 1 : 0;
+                $flightDate = $currentType === 'flyer' ? ($existingMembership['free_flight_date'] ?? null) : null;
+                if ($currentType === 'flyer' && array_key_exists('free_flight_date',$data)) $flightDate = $data['free_flight_date'] ?: null;
+
                 $ms=$pdo->prepare('INSERT INTO memberships (member_id,membership_year,membership_type,payment_status,paid_at,free_flight_entitled,free_flight_date) VALUES (:id,:y,:t,:p,:pa,:e,:fd) ON DUPLICATE KEY UPDATE membership_type=VALUES(membership_type),payment_status=VALUES(payment_status),paid_at=VALUES(paid_at),free_flight_entitled=VALUES(free_flight_entitled),free_flight_date=VALUES(free_flight_date)');
                 $ms->execute(['id'=>$id,'y'=>$year,'t'=>$currentType,'p'=>$payment,'pa'=>$paidAt,'e'=>$entitled,'fd'=>$flightDate]);
             }
@@ -298,7 +309,7 @@ body{font-family:Arial,sans-serif;background:#f5f6f8;margin:0;color:#171717}head
 <?php if($result):?><div class="ok"><strong>Import voltooid.</strong><p><?=$result['created']?> nieuwe leden · <?=$result['updated']?> bestaande leden bijgewerkt · <?=$result['skipped']?> rijen overgeslagen.</p><?php if($result['details']):?><details><summary>Overgeslagen rijen bekijken</summary><ul><?php foreach($result['details'] as $d):?><li><?=e($d)?></li><?php endforeach;?></ul></details><?php endif;?></div><div class="actions"><a class="btn" href="/">Naar dashboard</a><a class="btn secondary" href="/import.php">Nieuwe import</a></div>
 <?php elseif(!$state):?><div class="card"><h2>1. Bestand uploaden</h2><form method="post" enctype="multipart/form-data"><input type="hidden" name="csrf_token" value="<?=e(csrf_token())?>"><input type="hidden" name="action" value="upload"><input type="file" name="file" accept=".xlsx,.csv" required><p class="muted">Maximaal 15 MB. Ondersteund: Excel .xlsx en .csv.</p><button class="btn" type="submit">Uploaden en kolommen lezen</button></form></div>
 <?php else:?><form method="post" id="importForm"><input type="hidden" name="csrf_token" value="<?=e(csrf_token())?>"><input type="hidden" name="action" value="execute"><div class="card"><h2>2. Kolommen koppelen</h2><p><strong><?=e($state['original'])?></strong> · <?= (int)$state['row_count'] ?> gegevensrijen</p><div class="mapping"><table><thead><tr><th>Excel-kolom</th><th>Heli One-veld</th><th>Voorbeeld</th></tr></thead><tbody><?php foreach($state['headers'] as $i=>$header):?><tr><td><strong><?=e($header)?></strong></td><td><select class="mapping-select" name="mapping[<?=$i?>]"><?php foreach($fieldLabels as $key=>$label):?><option value="<?=e($key)?>"><?=e($label)?></option><?php endforeach;?></select></td><td><?=e((string)($state['preview'][0][$i] ?? ''))?></td></tr><?php endforeach;?></tbody></table></div><div class="name-order" id="nameOrderBox"><strong>Volgorde in de kolom Volledige naam</strong><p class="muted">Kies hoe namen zonder komma moeten worden opgesplitst.</p><label><input type="radio" name="name_order" value="first_last" checked> Voornaam eerst — bv. Jan Peeters</label><br><label><input type="radio" name="name_order" value="last_first"> Familienaam eerst — bv. Van den Bossche Jan</label></div><p class="muted">Naam is verplicht: gebruik óf Volledige naam, óf aparte kolommen Voornaam + Familienaam. E-mail is optioneel.</p></div>
-<div class="card"><h2>3. Vaste waarden voor deze batch</h2><p class="muted">Een ingevulde batchwaarde heeft voor alle rijen voorrang op een waarde uit Excel.</p><div class="defaults"><div><label>Vast e-mailadres</label><br><input type="email" name="default_email" placeholder="bv. contact@bedrijf.be"><p class="muted">Mag voor meerdere leden hetzelfde zijn.</p></div><div><label>Lid sinds</label><br><input type="date" name="default_member_since"></div><div><label>Type lid</label><br><select name="default_member_type"><option value="">Niet vast instellen</option><option value="supporting">Steunend</option><option value="flying">Vliegend</option></select></div><div><label>Status</label><br><select name="default_status"><option value="">Niet vast instellen</option><option value="active">Actief</option><option value="inactive">Inactief</option></select></div><div><label>Betaalstatus <?=$year?></label><br><select name="default_payment_status"><option value="">Niet vast instellen</option><option value="paid">Betaald</option><option value="unpaid">Niet betaald</option></select></div><div><label>Gratis vlucht <?=$year?></label><br><select name="default_free_flight_entitled"><option value="">Niet vast instellen</option><option value="1">Recht aanwezig</option><option value="0">Geen recht</option></select></div></div></div>
+<div class="card"><h2>3. Vaste waarden voor deze batch</h2><p class="muted">Een ingevulde batchwaarde heeft voor alle rijen voorrang op een waarde uit Excel. Gratis-vluchtrecht wordt automatisch bepaald: alleen FLYER heeft recht.</p><div class="defaults"><div><label>Vast e-mailadres</label><br><input type="email" name="default_email" placeholder="bv. contact@bedrijf.be"><p class="muted">Mag voor meerdere leden hetzelfde zijn.</p></div><div><label>Lid sinds</label><br><input type="date" name="default_member_since"></div><div><label>Type lid</label><br><select name="default_member_type"><option value="">Niet vast instellen</option><option value="viewer">VIEWER</option><option value="flyer">FLYER</option><option value="pilot">PILOT</option></select></div><div><label>Status</label><br><select name="default_status"><option value="">Niet vast instellen</option><option value="active">Actief</option><option value="inactive">Inactief</option></select></div><div><label>Betaalstatus <?=$year?></label><br><select name="default_payment_status"><option value="">Niet vast instellen</option><option value="paid">Betaald</option><option value="unpaid">Niet betaald</option></select></div></div></div>
 <div class="card"><h2>4. Tag(s) voor de hele import</h2><div class="tagbox" id="tagbox"><input id="tagInput" placeholder="Typ tag en druk ENTER"></div><input type="hidden" name="batch_tags" id="batchTags"><p class="muted">Deze tags worden aan iedere geïmporteerde rij toegevoegd. Bestaande tags blijven behouden.</p><?php if($tags):?><div class="suggestions"><?php foreach($tags as $tag):?><button type="button" class="suggestion" data-tag="<?=e((string)$tag)?>">+ <?=e((string)$tag)?></button><?php endforeach;?></div><?php endif;?></div>
 <div class="card"><h2>5. Controle</h2><div class="mapping"><table><thead><tr><?php foreach($state['headers'] as $h):?><th><?=e($h)?></th><?php endforeach;?></tr></thead><tbody><?php foreach($state['preview'] as $r):?><tr><?php foreach($state['headers'] as $i=>$h):?><td><?=e((string)($r[$i]??''))?></td><?php endforeach;?></tr><?php endforeach;?></tbody></table></div><div class="actions"><button class="btn" type="submit">Import uitvoeren</button><a class="btn secondary" href="/import.php?reset=1">Annuleren / ander bestand</a></div></div></form>
 <script>(()=>{const box=document.getElementById('tagbox'),input=document.getElementById('tagInput'),hidden=document.getElementById('batchTags'),nameBox=document.getElementById('nameOrderBox');let tags=[];function sync(){hidden.value=tags.join('\n')}function add(v){v=v.trim();if(!v||tags.some(t=>t.toLowerCase()===v.toLowerCase()))return;tags.push(v);const c=document.createElement('span');c.className='chip';c.textContent=v+' ';const b=document.createElement('button');b.type='button';b.textContent='×';b.addEventListener('click',()=>{tags=tags.filter(t=>t!==v);c.remove();sync()});c.appendChild(b);box.insertBefore(c,input);sync()}input.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();add(input.value);input.value=''}});document.querySelectorAll('.suggestion').forEach(b=>b.addEventListener('click',()=>add(b.dataset.tag||'')));document.getElementById('importForm').addEventListener('submit',()=>{if(input.value.trim())add(input.value)});function toggleName(){const yes=[...document.querySelectorAll('.mapping-select')].some(s=>s.value==='full_name');nameBox.classList.toggle('show',yes)}document.querySelectorAll('.mapping-select').forEach(s=>s.addEventListener('change',toggleName));toggleName();})();</script><?php endif;?></main></body></html>
