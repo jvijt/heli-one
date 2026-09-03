@@ -30,7 +30,6 @@ final class Database
         ]);
 
         self::normalizeMemberNames(self::$pdo);
-        if (function_exists('ensure_member_type_schema')) ensure_member_type_schema(self::$pdo);
         return self::$pdo;
     }
 
