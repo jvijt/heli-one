@@ -84,6 +84,28 @@ function ensure_member_type_schema(PDO $pdo): void
     $done = true;
 }
 
+// Centrale beheerheader: alle ingelogde beheerpagina's krijgen exact dezelfde Heli One-layout.
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET' && !empty($_SESSION['admin_id'])) {
+    $script = basename((string)($_SERVER['SCRIPT_NAME'] ?? ''));
+    if (!in_array($script, ['login.php','logout.php','setup.php','badge.php'], true)) {
+        register_shutdown_function(static function (): void {
+            $adminName = e((string)($_SESSION['admin_name'] ?? 'Administrator'));
+            echo '<style id="heli-one-shared-header-css">'
+                .'body>header:first-of-type{background:#111!important;color:#fff!important;padding:15px 28px!important;display:flex!important;justify-content:space-between!important;align-items:center!important;gap:20px!important;min-height:68px!important;box-sizing:border-box!important}'
+                .'body>header:first-of-type a{color:#fff!important}'
+                .'.ho-shared-brand{display:flex;align-items:center;gap:22px;min-width:0}.ho-shared-brand img{display:block;width:190px;height:auto;flex:0 0 auto}.ho-shared-title{font-size:20px;font-weight:700;white-space:nowrap}.ho-shared-nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}.ho-shared-nav a{text-decoration:underline}.ho-shared-sep{opacity:.45}'
+                .'@media(max-width:900px){.ho-shared-brand img{width:150px}.ho-shared-title{font-size:17px}}'
+                .'@media(max-width:650px){body>header:first-of-type{padding:13px 16px!important;align-items:flex-start!important;flex-direction:column!important}.ho-shared-brand{gap:12px}.ho-shared-brand img{width:135px}.ho-shared-title{font-size:15px}.ho-shared-nav{justify-content:flex-start;font-size:14px}}'
+                .'</style>';
+            echo '<script id="heli-one-shared-header-js">(function(){var h=document.querySelector("body>header:first-of-type");if(!h)return;h.innerHTML=' . json_encode(
+                '<div class="ho-shared-brand"><a href="/" aria-label="Naar dashboard"><img src="/assets/HeliOne%20-%20Logo%20Wit.png" alt="Heli One"></a><span class="ho-shared-title">Members Dashboard</span></div>'
+                .'<div class="ho-shared-nav"><a href="/">Dashboard</a><span class="ho-shared-sep">·</span><a href="/members.php">Leden</a><span class="ho-shared-sep">·</span><span>' . $adminName . '</span><span class="ho-shared-sep">·</span><a href="/logout.php">Afmelden</a></div>',
+                JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+            ) . ';})();</script>';
+        });
+    }
+}
+
 // De ledenfiche krijgt een client-side cropper voor pasfoto's (vaste verhouding 3:4).
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET' && basename((string)($_SERVER['SCRIPT_NAME'] ?? '')) === 'member.php') {
     register_shutdown_function(static function (): void {
