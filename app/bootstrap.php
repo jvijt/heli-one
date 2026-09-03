@@ -56,6 +56,34 @@ function ensure_member_soft_delete_schema(PDO $pdo): void
     $done = true;
 }
 
+function ensure_member_type_schema(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) return;
+    $dbName = (string)$pdo->query('SELECT DATABASE()')->fetchColumn();
+    $s=$pdo->prepare('SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=:db AND TABLE_NAME="members" AND COLUMN_NAME="member_type"');
+    $s->execute(['db'=>$dbName]);
+    $type=(string)$s->fetchColumn();
+    if ($type !== '' && !str_contains($type, "'pilot'")) {
+        $pdo->exec("ALTER TABLE members MODIFY member_type ENUM('supporting','flying','viewer','flyer','pilot') NOT NULL DEFAULT 'viewer'");
+        $pdo->exec("UPDATE members SET member_type='viewer' WHERE member_type='supporting'");
+        $pdo->exec("UPDATE members SET member_type='flyer' WHERE member_type='flying'");
+        $pdo->exec("ALTER TABLE members MODIFY member_type ENUM('viewer','flyer','pilot') NOT NULL DEFAULT 'viewer'");
+    }
+    $s=$pdo->prepare('SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=:db AND TABLE_NAME="memberships" AND COLUMN_NAME="membership_type"');
+    $s->execute(['db'=>$dbName]);
+    $type=(string)$s->fetchColumn();
+    if ($type !== '' && !str_contains($type, "'pilot'")) {
+        $pdo->exec("ALTER TABLE memberships MODIFY membership_type ENUM('supporting','flying','viewer','flyer','pilot') NOT NULL");
+        $pdo->exec("UPDATE memberships SET membership_type='viewer' WHERE membership_type='supporting'");
+        $pdo->exec("UPDATE memberships SET membership_type='flyer' WHERE membership_type='flying'");
+        $pdo->exec("ALTER TABLE memberships MODIFY membership_type ENUM('viewer','flyer','pilot') NOT NULL");
+    }
+    // De jaarlijkse vluchttoekenning volgt het lidtype: alleen FLYER heeft recht op 1 gratis vlucht.
+    $pdo->exec("UPDATE memberships ms INNER JOIN members m ON m.id=ms.member_id SET ms.free_flight_entitled=CASE WHEN m.member_type='flyer' THEN 1 ELSE 0 END");
+    $done = true;
+}
+
 // De ledenfiche krijgt een client-side cropper voor pasfoto's (vaste verhouding 3:4).
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET' && basename((string)($_SERVER['SCRIPT_NAME'] ?? '')) === 'member.php') {
     register_shutdown_function(static function (): void {
