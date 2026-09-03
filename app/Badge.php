@@ -57,10 +57,11 @@ function badge_member_data(PDO $pdo, int $memberId): array
     $m['tags'] = implode(', ', array_column($m['tag_rows'], 'name'));
     $m['full_name'] = trim((string)$m['first_name'].' '.(string)$m['last_name']);
     $m['postal_city'] = trim((string)($m['postal_code']??'').' '.(string)($m['city']??''));
-    $m['member_type_label'] = ($m['member_type']??'supporting') === 'flying' ? 'Vliegend' : 'Steunend';
+    $type=(string)($m['member_type']??'viewer');
+    $m['member_type_label'] = strtoupper(in_array($type,['viewer','flyer','pilot'],true)?$type:'viewer');
     $m['status_label'] = ($m['status']??'active') === 'active' ? 'Actief' : 'Inactief';
     $m['payment_status_label'] = ($m['payment_status']??'unpaid') === 'paid' ? 'Betaald' : 'Niet betaald';
-    $m['free_flight_entitled_label'] = (int)($m['free_flight_entitled']??1) === 1 ? 'Ja' : 'Nee';
+    $m['free_flight_entitled_label'] = (int)($m['free_flight_entitled']??0) === 1 ? 'Ja' : 'Nee';
     return $m;
 }
 
