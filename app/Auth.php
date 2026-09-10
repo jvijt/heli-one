@@ -44,11 +44,32 @@ final class Auth
     public static function attempt(string $email,string $password): bool
     {
         self::ensureUserSchema();
-        $stmt=Database::connection()->prepare('SELECT id,member_id,email,password_hash,name,role,is_active FROM users WHERE LOWER(email)=:email LIMIT 1');$stmt->execute(['email'=>strtolower(trim($email))]);$user=$stmt->fetch();
+        $pdo=Database::connection();
+        $email=strtolower(trim($email));
+        $stmt=$pdo->prepare('SELECT id,member_id,email,password_hash,name,role,is_active FROM users WHERE LOWER(email)=:email LIMIT 1');
+        $stmt->execute(['email'=>$email]);
+        $user=$stmt->fetch();
+
+        // Als het e-mailadres op de ledenfiche gewijzigd werd maar de login nog het oude
+        // adres bevat, laat het nieuwe ledenadres meteen als login werken en synchroniseer users.
+        if(!$user){
+            $stmt=$pdo->prepare('SELECT u.id,u.member_id,u.email,u.password_hash,u.name,u.role,u.is_active FROM users u INNER JOIN members m ON m.id=u.member_id WHERE u.role="member" AND LOWER(m.email)=:email LIMIT 1');
+            $stmt->execute(['email'=>$email]);
+            $user=$stmt->fetch();
+            if($user){
+                try{
+                    $pdo->prepare('UPDATE users SET email=:email WHERE id=:id')->execute(['email'=>$email,'id'=>$user['id']]);
+                    $user['email']=$email;
+                }catch(Throwable){
+                    return false;
+                }
+            }
+        }
+
         if(!$user||!(bool)$user['is_active']||!password_verify($password,$user['password_hash']))return false;
         session_regenerate_id(true);$_SESSION['user_id']=(int)$user['id'];$_SESSION['user_name']=(string)$user['name'];$_SESSION['user_email']=(string)$user['email'];$_SESSION['user_role']=(string)$user['role'];$_SESSION['member_id']=(int)($user['member_id']??0);
         if(in_array($user['role'],['admin','superadmin'],true)){$_SESSION['admin_id']=(int)$user['id'];$_SESSION['admin_name']=(string)$user['name'];$_SESSION['admin_email']=(string)$user['email'];}else unset($_SESSION['admin_id'],$_SESSION['admin_name'],$_SESSION['admin_email']);
-        Database::connection()->prepare('UPDATE users SET last_login_at=NOW() WHERE id=:id')->execute(['id'=>$user['id']]);return true;
+        $pdo->prepare('UPDATE users SET last_login_at=NOW() WHERE id=:id')->execute(['id'=>$user['id']]);return true;
     }
 
     public static function logout(): void
