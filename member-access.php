@@ -8,6 +8,24 @@ function ensure_access_schema(PDO $pdo):void{$pdo->exec("CREATE TABLE IF NOT EXI
 ensure_access_schema($pdo);
 $s=$pdo->prepare('SELECT * FROM members WHERE id=:id AND deleted_at IS NULL');$s->execute(['id'=>$id]);$m=$s->fetch();if(!$m){http_response_code(404);exit('Lid niet gevonden.');}
 $msg='';$err='';$newCode='';
+
+// Ledenfiche is de bron voor het e-mailadres van gewone ledenaccounts.
+// Als een beheerder het adres op de ledenfiche wijzigt, synchroniseren we de login automatisch.
+$memberEmail=strtolower(trim((string)($m['email']??'')));
+$q=$pdo->prepare('SELECT id,email,is_active,last_login_at FROM users WHERE member_id=:id AND role="member" LIMIT 1');$q->execute(['id'=>$id]);$existingUser=$q->fetch();
+if($existingUser&&$memberEmail!==''&&filter_var($memberEmail,FILTER_VALIDATE_EMAIL)&&strtolower((string)$existingUser['email'])!==$memberEmail){
+    try{
+        $check=$pdo->prepare('SELECT id FROM users WHERE LOWER(email)=:email AND id<>:id LIMIT 1');$check->execute(['email'=>$memberEmail,'id'=>$existingUser['id']]);
+        if($check->fetchColumn()){
+            $err='Het e-mailadres op de ledenfiche is al gekoppeld aan een andere login. De login werd daarom niet aangepast.';
+        }else{
+            $pdo->prepare('UPDATE users SET email=:email,name=:name WHERE id=:id')->execute(['email'=>$memberEmail,'name'=>trim((string)$m['first_name'].' '.(string)$m['last_name']),'id'=>$existingUser['id']]);
+            $existingUser['email']=$memberEmail;
+            $msg='Het loginadres werd automatisch gelijkgesteld met het e-mailadres op de ledenfiche.';
+        }
+    }catch(Throwable $e){$err='Het loginadres kon niet automatisch worden gesynchroniseerd.';}
+}
+
 if($_SERVER['REQUEST_METHOD']==='POST'){verify_csrf();try{$a=(string)($_POST['action']??'');
  if($a==='create_account'){$email=strtolower(trim((string)($_POST['email']??'')));$pw=(string)($_POST['password']??'');if(!filter_var($email,FILTER_VALIDATE_EMAIL))throw new RuntimeException('Vul een geldig e-mailadres in.');if(strlen($pw)<10)throw new RuntimeException('Wachtwoord moet minstens 10 tekens bevatten.');$q=$pdo->prepare('SELECT id FROM users WHERE member_id=:id');$q->execute(['id'=>$id]);if($q->fetchColumn())throw new RuntimeException('Dit lid heeft al een account.');$pdo->prepare('INSERT INTO users(member_id,name,email,password_hash,role,is_active) VALUES(:mid,:name,:email,:hash,"member",1)')->execute(['mid'=>$id,'name'=>trim($m['first_name'].' '.$m['last_name']),'email'=>$email,'hash'=>password_hash($pw,PASSWORD_DEFAULT)]);$pdo->prepare('UPDATE members SET email=:e WHERE id=:id')->execute(['e'=>$email,'id'=>$id]);$msg='Ledenaccount aangemaakt.';}
  elseif($a==='toggle'){$pdo->prepare('UPDATE users SET is_active=1-is_active WHERE member_id=:id AND role="member"')->execute(['id'=>$id]);$msg='Accountstatus aangepast.';}
